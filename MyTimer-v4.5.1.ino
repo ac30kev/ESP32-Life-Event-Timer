@@ -59,10 +59,12 @@ uint16_t welcomeColor = 0x0390;
 TFT_eSPI tft = TFT_eSPI();
 Preferences preferences;
 
+int invert = 1; //0=std, 1=invverted screen colours
+
 // Global variables for WiFi connection attempts
 int wifiAttempts = 0;
 const int MAX_WIFI_ATTEMPTS = 3;
-const int WIFI_RETRY_DELAY = 5000;  // 5 seconds delay between attempts
+const int WIFI_RETRY_DELAY = 3000;  // 5 seconds delay between attempts
 
 const char* ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = 0;
@@ -838,29 +840,29 @@ void handleMainScreenTouch(int16_t x, int16_t y) {
     return;
   }
 
-  if (y > tft.height() - 60) {
+  if (y > tft.height() - 25) {// was 30
     Serial.println("Opening target screen");
     currentScreenState = TARGET_SCREEN;
     displayTargetScreen();
-  } else if (x < 60 && y < 60) {
+  } else if (x < 40 && y < 40) {
     Serial.println("Opening WiFi screen");
     currentScreenState = WIFI_SCREEN;
     displayWiFiOptions();
-  } else if (x < 80 && y > ct + 60 && y < ct + 150) {
+  } else if (x < 30 && y > ct + 90 && y < ct + 120) {
     Serial.println("Opening alarm screen");
     currentScreenState = ALARM_SCREEN;
     displayAlarmScreen();
-  } else if (x > tft.width() - 80 && x < tft.width() - 20 && y > ct + 75 && y < ct + 140) {
+  } else if (x > tft.width() - 70 && x < tft.width() - 40 && y > ct + 90 && y < ct + 120) {
     Serial.println("Handling time update touch");
     handleTimeUpdateTouch();
-  } else if (y >= rt && y < rt + 100) {
+  } else if (y >= rt && y < rt + 84) {
     Serial.println("Highlighting remaining time");
     isRemainingTimeHighlighted = true;
     remainingTimeHighlightStart = millis();
     displayCountdownBoxes();
     displayCountdownLabels();
     displayCountdownValues();
-  } else if (x > tft.width() - 80 && y > ct + 75) {
+  } else if (x > tft.width() - 30 && y > ct + 90 && y < ct + 120) {
     Serial.println("Toggling calibration mode");
     toggleCalibrationMode();
   }
@@ -1968,9 +1970,8 @@ void drawToggleSwitch(int x, int y, bool state) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("Keyboard layout debug - version abc");
   tft.init();
-  tft.invertDisplay(1);// comment out if std CYD
+  tft.invertDisplay(invert);// comment out if std CYD
   tft.setRotation(rot);
   tft.fillScreen(bgColor);
 
