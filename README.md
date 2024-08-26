@@ -6,3 +6,6 @@ I want to be able to add, remove or edit target date info, (including time in HH
 I also wanted to edit the wifi credentials stored within, as I may take it to another place than home or work, so I can either use a softAP or direct touch screen to input the data - not decided yet...
 I've done most of the work, but need git to help my iteration control because its dreadful and i keep getting lost...
 
+Also, I stole ( and altered) the step files for an excellent case from https://www.thingiverse.com/thing:6662492. 
+Genius work but better now as you can store the stylus with the ESP32.
+
