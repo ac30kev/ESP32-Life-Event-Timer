@@ -8,5 +8,5 @@ I've done most of the work, but need git to help my iteration control because it
 
 Also, I stole ( and altered) the step files for an excellent case from https://www.thingiverse.com/thing:6662492. 
 Genius work but better now as you can store the stylus with the ESP32. And space for the speaker (speaker? ...yes.) and battery storage and charging device placement.
-These I will upload at a lter date as I'm struggling to do so now.
+These I will upload at a later date as I'm struggling to do so now.
 
