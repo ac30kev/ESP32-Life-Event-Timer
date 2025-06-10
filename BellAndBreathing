@@ -1,0 +1,74 @@
+#include <WiFi.h>
+#include <esp_now.h>
+#include <Adafruit_NeoPixel.h>
+
+#define LED_PIN        4
+#define NUM_LEDS       17
+#define BREATH_MAX     200
+#define FLASH_BRIGHT   255
+#define FLASH_INTERVAL 500
+#define ALERT_DURATION 10000
+
+// CYD MAC
+uint8_t cydMAC[] = { /* your CYD MAC */ };
+
+Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB+NEO_KHZ800);
+
+bool alertActive = false;
+unsigned long alertStart = 0, lastToggle = 0;
+bool toggleState = false;
+unsigned long breathStart = 0;
+
+// ESP-NOW callback
+void onReceiveBell(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+  if (len >= 4 && memcmp(data, "bell", 4)==0) {
+    alertActive = true;
+    alertStart  = millis();
+    lastToggle  = 0;
+    toggleState = false;
+  }
+}  // **** end of onReceiveBell
+
+void setup() {
+  Serial.begin(115200);
+  strip.begin(); strip.show();
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  esp_now_init();
+  esp_now_register_recv_cb(onReceiveBell);
+
+  esp_now_peer_info_t p = {};
+  memcpy(p.peer_addr, cydMAC, 6);
+  p.channel=0; p.encrypt=false;
+  esp_now_add_peer(&p);
+
+  Serial.println("Heltec ready");
+}  // **** end of setup
+
+void loop() {
+  unsigned long now = millis();
+  if (alertActive) {
+    if (now - lastToggle >= FLASH_INTERVAL) {
+      lastToggle = now;
+      toggleState = !toggleState;
+      uint32_t c = toggleState ? strip.Color(FLASH_BRIGHT,0,0) : 0;
+      for (int i=0;i<NUM_LEDS;i++) strip.setPixelColor(i, c);
+      strip.show();
+    }
+    if (now - alertStart >= ALERT_DURATION) {
+      alertActive = false;
+    }
+  } else {
+    // breathing purple effect
+    if (breathStart==0) breathStart=now;
+    unsigned long t=(now-breathStart)%14000UL;
+    int b = (t<5000)?map(t,0,5000,0,BREATH_MAX)
+          :(t<9000)?BREATH_MAX
+          :map(t-9000,0,5000,BREATH_MAX,0);
+    uint32_t col = strip.Color(b*0.8, b*0.6, b);
+    for(int i=0;i<NUM_LEDS;i++) strip.setPixelColor(i,col);
+    strip.show();
+    delay(20);
+  }
+  yield();
+}  // **** end of loop
