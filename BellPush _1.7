@@ -1,0 +1,84 @@
+// esp32_bellpush_v1.7.ino
+// Sends "bell" on BOOT press via ESP-NOW, sleeps on "reset" via memcmp()
+
+#include <WiFi.h>
+#include <esp_now.h>
+
+#define BUTTON_PIN    0           // BOOT button
+#define LED_PIN       2           // On-board LED
+#define MAX_AWAKE_MS 30000        // 30 seconds
+
+uint8_t cydMAC[] = {0x14,0x2B,0x2F,0xDA,0x50,0xC4};  // Your CYD MAC
+
+bool    signalSent   = false;
+bool    resetReceived= false;
+unsigned long sendTime;
+
+void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  // ✅ Exact 5-byte match for "reset"
+  if (len == 5 && memcmp(data, "reset", 5) == 0) {
+    Serial.println("◀ RESET received");
+    resetReceived = true;
+  }
+}  // **** end of onDataRecv
+
+void sendBell() {
+  const char msg[] = "bell";
+  esp_err_t res = esp_now_send(cydMAC, (uint8_t*)msg, sizeof(msg));
+  Serial.printf("▶ sendBell() → %d\n", res);
+  if (res == ESP_OK) {
+    digitalWrite(LED_PIN, HIGH);
+    delay(100);
+    digitalWrite(LED_PIN, LOW);
+  }
+}  // **** end of sendBell
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(BUTTON_PIN,  INPUT_PULLUP);
+  pinMode(LED_PIN,     OUTPUT);
+  digitalWrite(LED_PIN, LOW);
+
+  // Wake on BOOT press
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(10);
+
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("‼ ESP-NOW init failed");
+    return;
+  }
+  Serial.println("✅ ESP-NOW init OK");
+
+  esp_now_register_recv_cb(onDataRecv);
+
+  // Register CYD peer
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, cydMAC, 6);
+  peer.channel  = 0;
+  peer.encrypt  = false;
+  esp_now_add_peer(&peer);
+
+  Serial.println("🔔 Bellpush ready");
+}  // **** end of setup
+
+void loop() {
+  unsigned long now = millis();
+
+  if (!signalSent && digitalRead(BUTTON_PIN) == LOW) {
+    Serial.println("🔘 BUTTON pressed");
+    sendBell();
+    signalSent = true;
+    sendTime   = now;
+  }
+
+  if (signalSent && (resetReceived || now - sendTime > MAX_AWAKE_MS)) {
+    Serial.println("💤 Going to deep sleep");
+    delay(100);
+    esp_deep_sleep_start();
+  }
+
+  delay(10);
+}  // **** end of loop
