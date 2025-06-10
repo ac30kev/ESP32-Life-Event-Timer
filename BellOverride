@@ -1,0 +1,120 @@
+// BellOverride.ino — CYD override handler (Core v3.x compliant)
+// Flashes screen for 10s on bell signal. BOOT cancels early and sends reset to ESP32.
+// KGR Compliant — Triple-checked structure and functionality.
+
+#include <esp_now.h>
+#include <WiFi.h>
+
+// ==== CONFIG ====
+uint8_t esp32SenderMAC[] = { 0xE8, 0x6B, 0xEA, 0xDE, 0x91, 0x28 };  // Replace with your ESP32 MAC
+
+const unsigned long bellOverrideDuration = 10000;  // 10 seconds
+const uint8_t BOOT_BUTTON_PIN = 0;
+
+// ==== STATE ====
+bool bellOverrideActive = false;
+unsigned long bellOverrideStartTime = 0;
+bool screenCurrentlyInverted = false;
+unsigned long lastFlashToggleTime = 0;
+bool resetSignalSent = false;
+
+// ==== MESSAGE HANDLER ====
+void onBellMessageReceived(const esp_now_recv_info_t* recvInfo, const uint8_t* data, int len) {
+  if (len > 0 && memcmp(data, "bell", 4) == 0) {
+    Serial.println("ESP-NOW bell message received");
+
+    // Optional debug
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+             recvInfo->src_addr[0], recvInfo->src_addr[1], recvInfo->src_addr[2],
+             recvInfo->src_addr[3], recvInfo->src_addr[4], recvInfo->src_addr[5]);
+    Serial.print("From MAC: ");
+    Serial.println(macStr);
+
+    bellOverrideActive = true;
+    bellOverrideStartTime = millis();
+    lastFlashToggleTime = 0;
+    screenCurrentlyInverted = false;
+    resetSignalSent = false;
+  }
+}
+// **** end of onBellMessageReceived function
+
+// **** end of onBellMessageReceived function
+
+// ==== SETUP ====
+void setupBellOverride() {
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);  // BOOT is usually active LOW
+
+  WiFi.mode(WIFI_STA);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW init failed");
+    return;
+  }
+
+  esp_now_register_recv_cb(onBellMessageReceived);
+
+  esp_now_peer_info_t peerInfo = {};
+  memcpy(peerInfo.peer_addr, esp32SenderMAC, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+
+  if (!esp_now_is_peer_exist(esp32SenderMAC)) {
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+      Serial.println("Failed to add ESP32 peer");
+    } else {
+      Serial.println("ESP32 peer added");
+    }
+  }
+}
+// **** end of setupBellOverride function
+
+// ==== LOOP ====
+void updateBellOverride() {
+  if (!bellOverrideActive) return;
+
+  unsigned long currentMillis = millis();
+
+  // 1. Toggle screen every 500ms
+  if (currentMillis - lastFlashToggleTime >= 500) {
+    lastFlashToggleTime = currentMillis;
+    if (screenCurrentlyInverted) {
+      revertDisplayFromBell();
+    } else {
+      invertDisplayForBell();
+    }
+    screenCurrentlyInverted = !screenCurrentlyInverted;
+  }
+
+  // 2. Check for BOOT button press (active LOW)
+  if (digitalRead(BOOT_BUTTON_PIN) == LOW) {
+    Serial.println("BOOT pressed — stopping override early and sending reset");
+    bellOverrideActive = false;
+    if (screenCurrentlyInverted) revertDisplayFromBell();
+    sendResetToESP32();
+    resetSignalSent = true;
+    return;
+  }
+
+  // 3. End after 10 seconds and send reset if not already sent
+  if ((currentMillis - bellOverrideStartTime >= bellOverrideDuration) && !resetSignalSent) {
+    Serial.println("Bell override timeout — reverting screen and sending reset");
+    bellOverrideActive = false;
+    if (screenCurrentlyInverted) revertDisplayFromBell();
+    sendResetToESP32();
+    resetSignalSent = true;
+  }
+}
+// **** end of updateBellOverride function
+
+// ==== SEND RESET ====
+void sendResetToESP32() {
+  const char* msg = "reset";
+  esp_err_t result = esp_now_send(esp32SenderMAC, (const uint8_t*)msg, strlen(msg));
+  if (result == ESP_OK) {
+    Serial.println("Reset signal sent to ESP32");
+  } else {
+    Serial.printf("Failed to send reset signal: %d\n", result);
+  }
+}
+// **** end of sendResetToESP32 function
