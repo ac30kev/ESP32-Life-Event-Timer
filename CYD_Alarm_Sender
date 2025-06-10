@@ -1,0 +1,53 @@
+#include <WiFi.h>
+#include <esp_now.h>
+#include <TFT_eSPI.h>
+
+TFT_eSPI tft = TFT_eSPI();
+
+#define BOOT_BUTTON_PIN 0
+
+// MAC addresses
+uint8_t bellPushMAC[] = { /* your bell ESP32 MAC */ };
+uint8_t heltecMAC[]   = { /* your Heltec MAC */ };
+
+void onReceiveData(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  if (len > 0 && strncmp((char*)data, "bell", 4) == 0) {
+    // Invert the OLED
+    tft.invertDisplay(true);
+
+    // 1) Tell the bell‐ESP32 to sleep:
+    const char *rst = "reset";
+    esp_now_send(bellPushMAC, (uint8_t*)rst, strlen(rst)+1);
+
+    // 2) Tell the Heltec to flash LEDs:
+    const char *lt = "light";
+    esp_now_send(heltecMAC, (uint8_t*)lt, strlen(lt)+1);
+  }
+}  // **** end of onReceiveData
+
+void setup() {
+  Serial.begin(115200);
+  tft.init(); tft.setRotation(1);
+  pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  esp_now_init();
+  esp_now_register_recv_cb(onReceiveData);
+
+  // register peers
+  esp_now_peer_info_t p = {};
+  memcpy(p.peer_addr, bellPushMAC, 6);
+  p.channel = 0; p.encrypt = false;
+  esp_now_add_peer(&p);
+  memcpy(p.peer_addr, heltecMAC, 6);
+  esp_now_add_peer(&p);
+
+  Serial.println("CYD ready");
+}  // **** end of setup
+
+void loop() {
+  // your existing display/alarm logic
+  // remember to call tft.invertDisplay(false) when appropriate
+  delay(10);
+}  // **** end of loop
