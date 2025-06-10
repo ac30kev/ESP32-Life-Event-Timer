@@ -10,3 +10,8 @@ Also, I stole ( and altered) the step files for an excellent case from https://w
 Genius work but better now as you can store the stylus with the ESP32. And space for the speaker (speaker? ...yes.) and battery storage and charging device placement.
 These I will upload at a later date as I'm struggling to do so now.
 
+New amendments: added the 2 codes for flashing the alarm for the 'teas ready' alarm; 1 for cyd extra ino file, and one for the esp32.
+I now want to add code for the 'breath' cube to also flash bright red when the pushbutton is activated.
+
+The MAC codes need watching.
+
