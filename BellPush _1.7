@@ -5,6 +5,8 @@
 #define BELL_PIN        13     // your external bell button (GPIO13)
 #define BOOT_PIN         0     // onboard BOOT button (GPIO0)
 #define LED_PIN          2     // onboard LED
+
+// put addresses of every esp32 this pushbutton will contact.
 static const uint8_t cydMACs[][6] = {
   { 0xEC, 0x64, 0xC9, 0x93, 0xF5, 0xB0 },  // CYD #1
   { 0x14, 0x2B, 0x2F, 0xDA, 0x50, 0xC4 },   // CYD #2
@@ -83,11 +85,7 @@ void setup() {
   Serial.println("  ↪ EXT1 wake on BELL (GPIO13)");
 
   // — Init Wi-Fi & ESP-NOW —
- // bring up Wi-Fi in station mode so we can read its MAC
   WiFi.mode(WIFI_STA);
-  delay(50);                       // give the MAC a moment to initialize
-  Serial.print("BellPush MAC Addr: ");
-  Serial.println(WiFi.macAddress());
   WiFi.disconnect();
 
   if (esp_now_init() != ESP_OK) {
