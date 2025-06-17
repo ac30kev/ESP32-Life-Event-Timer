@@ -1,74 +1,159 @@
 #include <WiFi.h>
 #include <esp_now.h>
-#include <Adafruit_NeoPixel.h>
+#include <FastLED.h>
 
-#define LED_PIN        4
-#define NUM_LEDS       17
-#define BREATH_MAX     200
-#define FLASH_BRIGHT   255
-#define FLASH_INTERVAL 500
-#define ALERT_DURATION 10000
+// ——— CONFIG ———
+#define DATA_PIN 4
+#define NUM_LEDS 17
+#define COLOR_ORDER GRB
+#define CHIPSET WS2812B
 
-// CYD MAC
-uint8_t cydMAC[] = { /* your CYD MAC */ };
+// ESP-NOW sender MAC(s) (fill in your bell-push ESP32 here)
+static const uint8_t bellSenderMAC[][6] = {
+  { 0xE8, 0x6B, 0xEA, 0xDE, 0xAB, 0x04 }
+};
+const size_t NUM_SENDERS = sizeof(bellSenderMAC) / sizeof(bellSenderMAC[0]);
 
-Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB+NEO_KHZ800);
+// Override timing
+const unsigned long OVERRIDE_DURATION = 10000;  // 10 s total
+const unsigned long FLASH_INTERVAL = 500;       // 0.5 s on/off
 
-bool alertActive = false;
-unsigned long alertStart = 0, lastToggle = 0;
-bool toggleState = false;
+// Breathing timings (seconds)
+const float BREATH_UP_SEC = 3.0;
+const float BREATH_HOLD_HI = 2.0;
+const float BREATH_DOWN_SEC = 4.0;
+const float BREATH_HOLD_LO = 1.0;
+const uint8_t BREATH_MIN = 20;  // never fully off
+const uint8_t BREATH_MAX = 180;
+
+// ——— STATE ———
+CRGB leds[NUM_LEDS];
+
+bool overrideActive = false;
+unsigned long overrideStartTime = 0;
+unsigned long lastFlashToggle = 0;
+bool flashOn = false;
+
+// Breathing state
 unsigned long breathStart = 0;
+uint8_t breathPhase = 0;  // 0=up,1=hold_hi,2=down,3=hold_lo
 
-// ESP-NOW callback
-void onReceiveBell(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
-  if (len >= 4 && memcmp(data, "bell", 4)==0) {
-    alertActive = true;
-    alertStart  = millis();
-    lastToggle  = 0;
-    toggleState = false;
+// ——— ESP-NOW CALLBACK ———
+void onBellRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+  // check sender
+  for (size_t i = 0; i < NUM_SENDERS; i++) {
+    if (memcmp(info->src_addr, bellSenderMAC[i], 6) == 0) {
+      if (len >= 4 && memcmp(data, "bell", 4) == 0) {
+        Serial.println("🔔 bell message received");
+        overrideActive = true;
+        overrideStartTime = millis();
+        lastFlashToggle = 0;
+        flashOn = false;
+      }
+      break;
+    }
   }
-}  // **** end of onReceiveBell
+}
 
+// ——— SETUP ———
 void setup() {
   Serial.begin(115200);
-  strip.begin(); strip.show();
+  delay(100);
   WiFi.mode(WIFI_STA);
+  delay(50);
+  
+  // Print own MAC
+  Serial.print("Heltec MAC Address: ");
+  Serial.println(WiFi.macAddress());
+
+  // FastLED init
+  FastLED.addLeds<CHIPSET, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);
+  FastLED.clear();
+  FastLED.show();
+
+  // ESP-NOW init
+
   WiFi.disconnect();
-  esp_now_init();
-  esp_now_register_recv_cb(onReceiveBell);
-
-  esp_now_peer_info_t p = {};
-  memcpy(p.peer_addr, cydMAC, 6);
-  p.channel=0; p.encrypt=false;
-  esp_now_add_peer(&p);
-
-  Serial.println("Heltec ready");
-}  // **** end of setup
-
-void loop() {
-  unsigned long now = millis();
-  if (alertActive) {
-    if (now - lastToggle >= FLASH_INTERVAL) {
-      lastToggle = now;
-      toggleState = !toggleState;
-      uint32_t c = toggleState ? strip.Color(FLASH_BRIGHT,0,0) : 0;
-      for (int i=0;i<NUM_LEDS;i++) strip.setPixelColor(i, c);
-      strip.show();
-    }
-    if (now - alertStart >= ALERT_DURATION) {
-      alertActive = false;
-    }
-  } else {
-    // breathing purple effect
-    if (breathStart==0) breathStart=now;
-    unsigned long t=(now-breathStart)%14000UL;
-    int b = (t<5000)?map(t,0,5000,0,BREATH_MAX)
-          :(t<9000)?BREATH_MAX
-          :map(t-9000,0,5000,BREATH_MAX,0);
-    uint32_t col = strip.Color(b*0.8, b*0.6, b);
-    for(int i=0;i<NUM_LEDS;i++) strip.setPixelColor(i,col);
-    strip.show();
-    delay(20);
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("❌ ESP-NOW init failed");
+    while (true) delay(1000);
   }
-  yield();
-}  // **** end of loop
+  esp_now_register_recv_cb(onBellRecv);
+
+  // register senders as peers (optional for receive-only, but safe)
+  for (size_t i = 0; i < NUM_SENDERS; i++) {
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, bellSenderMAC[i], 6);
+    peer.channel = 0;
+    peer.encrypt = false;
+    esp_now_add_peer(&peer);
+  }
+
+  // start breathing
+  breathStart = millis();
+  Serial.println("✅ Bell & Breathe ready");
+}
+
+// ——— HELPERS ———
+// Linear interpolation
+uint8_t lerp8(uint8_t a, uint8_t b, float t) {
+  return a + (b - a) * t;
+}
+
+void doBreathing() {
+  unsigned long now = millis();
+  float cycleDur = BREATH_UP_SEC + BREATH_HOLD_HI + BREATH_DOWN_SEC + BREATH_HOLD_LO;
+  float t = fmod((now - breathStart) / 1000.0, cycleDur);
+
+  float v;
+  if (t < BREATH_UP_SEC) {
+    // ramp up
+    v = t / BREATH_UP_SEC;
+  } else if (t < BREATH_UP_SEC + BREATH_HOLD_HI) {
+    // hold high
+    v = 1.0;
+  } else if (t < BREATH_UP_SEC + BREATH_HOLD_HI + BREATH_DOWN_SEC) {
+    // ramp down
+    v = 1.0 - (t - (BREATH_UP_SEC + BREATH_HOLD_HI)) / BREATH_DOWN_SEC;
+  } else {
+    // hold low
+    v = 0.0;
+  }
+
+  uint8_t brightness = lerp8(BREATH_MIN, BREATH_MAX, v);
+  fill_solid(leds, NUM_LEDS, CHSV(160, 200, brightness));  // e.g. purple hue=160
+  FastLED.show();
+}
+
+void doOverrideFlash() {
+  unsigned long now = millis();
+
+  // toggle every FLASH_INTERVAL
+  if (now - lastFlashToggle >= FLASH_INTERVAL) {
+    lastFlashToggle = now;
+    flashOn = !flashOn;
+  }
+
+  if (flashOn) {
+    fill_solid(leds, NUM_LEDS, CRGB::Red);
+  } else {
+    FastLED.clear();
+  }
+  FastLED.show();
+
+  // end override?
+  if (now - overrideStartTime >= OVERRIDE_DURATION) {
+    overrideActive = false;
+    breathStart = now;  // restart breathing cycle
+    Serial.println("⏱ override ended, resuming breathe");
+  }
+}
+
+// ——— LOOP ———
+void loop() {
+  if (overrideActive) {
+    doOverrideFlash();
+  } else {
+    doBreathing();
+  }
+}
