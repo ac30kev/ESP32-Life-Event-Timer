@@ -1,84 +1,136 @@
-// esp32_bellpush_v1.7.ino
-// Sends "bell" on BOOT press via ESP-NOW, sleeps on "reset" via memcmp()
-
-#include <WiFi.h>
 #include <esp_now.h>
+#include <WiFi.h>
 
-#define BUTTON_PIN    0           // BOOT button
-#define LED_PIN       2           // On-board LED
-#define MAX_AWAKE_MS 30000        // 30 seconds
+// ——— CONFIG ———
+#define BELL_PIN        13     // your external bell button (GPIO13)
+#define BOOT_PIN         0     // onboard BOOT button (GPIO0)
+#define LED_PIN          2     // onboard LED
+static const uint8_t cydMACs[][6] = {
+  { 0xEC, 0x64, 0xC9, 0x93, 0xF5, 0xB0 },  // CYD #1
+  { 0x14, 0x2B, 0x2F, 0xDA, 0x50, 0xC4 },   // CYD #2
+  {0xFC, 0xF5, 0xC4, 0x26, 0x62, 0xEC } // breathe leds
+};
+const size_t NUM_CYDS = sizeof(cydMACs) / sizeof(cydMACs[0]);
+const unsigned long MAX_AWAKE_TIME = 10000; // ms before forced sleep
 
-uint8_t cydMAC[] = {0x14,0x2B,0x2F,0xDA,0x50,0xC4};  // Your CYD MAC
+// ——— STATE ———
+volatile bool resetReceived = false;
 
-bool    signalSent   = false;
-bool    resetReceived= false;
-unsigned long sendTime;
-
-void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
-  // ✅ Exact 5-byte match for "reset"
-  if (len == 5 && memcmp(data, "reset", 5) == 0) {
-    Serial.println("◀ RESET received");
+// ——— ESP-NOW RECEIVER ———
+void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+  if (len >= 5 && memcmp(data, "reset", 5) == 0) {
+    // which CYD sent it?
+    for (size_t i = 0; i < NUM_CYDS; i++) {
+      if (memcmp(info->src_addr, cydMACs[i], 6) == 0) {
+        Serial.printf("◀ RESET received from CYD #%u\n", i+1);
+        break;
+      }
+    }
     resetReceived = true;
   }
-}  // **** end of onDataRecv
+}
 
+// ——— SEND BELL + SLEEP ———
 void sendBell() {
-  const char msg[] = "bell";
-  esp_err_t res = esp_now_send(cydMAC, (uint8_t*)msg, sizeof(msg));
-  Serial.printf("▶ sendBell() → %d\n", res);
-  if (res == ESP_OK) {
-    digitalWrite(LED_PIN, HIGH);
-    delay(100);
-    digitalWrite(LED_PIN, LOW);
-  }
-}  // **** end of sendBell
+  Serial.println("🔔 Sending BELL to all CYDs…");
+  const uint8_t msg[] = { 'b','e','l','l','\0' };
 
-void setup() {
-  Serial.begin(115200);
-  pinMode(BUTTON_PIN,  INPUT_PULLUP);
-  pinMode(LED_PIN,     OUTPUT);
+  for (size_t i = 0; i < NUM_CYDS; i++) {
+    esp_err_t res = esp_now_send(cydMACs[i], msg, sizeof(msg));
+    Serial.printf("  ▶ peer %u → %s\n", i+1,
+                  res == ESP_OK ? "OK" : String("ERR " + String(res)).c_str());
+  }
+
+  // flash LED as visual ack
+  digitalWrite(LED_PIN, HIGH);
+  delay(100);
   digitalWrite(LED_PIN, LOW);
 
-  // Wake on BOOT press
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
+  Serial.println("⏱ Going to deep sleep now");
+  esp_deep_sleep_start();
+}
 
+// ——— SETUP & BOOT LOGIC ———
+void setup() {
+  Serial.begin(115200);
+  delay(50);
+  pinMode(BELL_PIN, INPUT_PULLUP);
+  pinMode(BOOT_PIN,  INPUT_PULLUP);
+  pinMode(LED_PIN,   OUTPUT);
+
+  // Report wake reason:
+  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+  switch (cause) {
+    case ESP_SLEEP_WAKEUP_EXT0:
+      Serial.println("🔄 Wakeup: BOOT button (EXT0)");
+      break;
+    case ESP_SLEEP_WAKEUP_EXT1:
+      Serial.println("🔄 Wakeup: BELL button (EXT1)");
+      break;
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+    default:
+      Serial.println("🔄 Cold boot / manual reset");
+      break;
+  }
+
+  // — Configure both wake sources —
+  // EXT0 = single-pin (GPIO0 low)
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0);
+  Serial.println("  ↪ EXT0 wake on BOOT (GPIO0)");
+
+  // EXT1 = “ALL_LOW” on mask; here mask is only GPIO13
+  esp_sleep_enable_ext1_wakeup(1ULL << BELL_PIN, ESP_EXT1_WAKEUP_ALL_LOW);
+  Serial.println("  ↪ EXT1 wake on BELL (GPIO13)");
+
+  // — Init Wi-Fi & ESP-NOW —
+ // bring up Wi-Fi in station mode so we can read its MAC
   WiFi.mode(WIFI_STA);
+  delay(50);                       // give the MAC a moment to initialize
+  Serial.print("BellPush MAC Addr: ");
+  Serial.println(WiFi.macAddress());
   WiFi.disconnect();
-  delay(10);
 
   if (esp_now_init() != ESP_OK) {
-    Serial.println("‼ ESP-NOW init failed");
-    return;
+    Serial.println("❌ ESP-NOW init failed");
+    while (true) { delay(1000); }
   }
-  Serial.println("✅ ESP-NOW init OK");
-
   esp_now_register_recv_cb(onDataRecv);
 
-  // Register CYD peer
-  esp_now_peer_info_t peer = {};
-  memcpy(peer.peer_addr, cydMAC, 6);
-  peer.channel  = 0;
-  peer.encrypt  = false;
-  esp_now_add_peer(&peer);
+  // — Register peers —
+  for (size_t i = 0; i < NUM_CYDS; i++) {
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, cydMACs[i], 6);
+    peer.channel = 0;
+    peer.encrypt = false;
+    if (!esp_now_is_peer_exist(cydMACs[i])) {
+      if (esp_now_add_peer(&peer) == ESP_OK) {
+        Serial.printf("✅ peer %u added\n", i+1);
+      } else {
+        Serial.printf("❌ peer %u add failed\n", i+1);
+      }
+    }
+  }
 
-  Serial.println("🔔 Bellpush ready");
-}  // **** end of setup
+  Serial.println("✅ BellPush ready (waiting for button…)");
+}
 
+// ——— MAIN LOOP ———
 void loop() {
-  unsigned long now = millis();
+  static bool lastState = HIGH;
+  bool cur = digitalRead(BELL_PIN);
 
-  if (!signalSent && digitalRead(BUTTON_PIN) == LOW) {
-    Serial.println("🔘 BUTTON pressed");
+  // Detect falling edge on BELL pin or BOOT pin
+  if (lastState == HIGH && cur == LOW) {
+    Serial.println("🔘 BELL pressed");
     sendBell();
-    signalSent = true;
-    sendTime   = now;
+  }
+  lastState = cur;
+
+  // Also allow BOOT pin to send same message:
+  if (digitalRead(BOOT_PIN) == LOW) {
+    Serial.println("🔘 BOOT pressed");
+    sendBell();
   }
 
-  if (signalSent && (resetReceived || now - sendTime > MAX_AWAKE_MS)) {
-    Serial.println("💤 Going to deep sleep");
-    delay(100);
-    esp_deep_sleep_start();
-  }
-
-  delay(10);
-}  // **** end of loop
+  delay(50);
+}
