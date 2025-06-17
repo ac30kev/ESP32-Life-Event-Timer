@@ -17,3 +17,6 @@ I now want to add code for the 'breath' cube to also flash bright red when the p
 
 The MAC codes need watching.
 
+I have up-issued all codes, latest being MyTimer-v5.0.0, (inc BellOverride), BellPush1.7 and BellAndBreath1.0
+
+just need to add the MAC address, which should show on Serial.print, when uploaded.
