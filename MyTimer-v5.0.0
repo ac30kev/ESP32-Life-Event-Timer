@@ -144,9 +144,9 @@ struct WiFiOption {
 
 // Declare the options array with initial values
 WiFiOption options[MAX_WIFI_OPTIONS] = {
-  { "VM1459801", "qw4Hdxbrs5wx!", "home" },
-  { "CASWIFI", "securew1f1", "work" },
-  { "Kevin s Galaxy A14 5G", "1a1a1a1a", "phone" },
+  { "xxxxxxxx", "xxxxxxxxxxx", "home" },
+  { "CASWIFI", "xxxxxxx", "work" },
+  { "myphonehotspot", "xxxxxxxx", "phone" },
   { "", "", "" },
   { "", "", "" }
 };
@@ -158,11 +158,11 @@ struct TargetOption {
 };
 
 TargetOption targetOptions[MAX_TARGET_OPTIONS] = {
-  { "00:00", "13/06/2028", "Retirement" },
-  { "17:00", "24/03/2025", "Cruise!" },
-  { "00:00", "13/06/2025", "When I'm 64!" },
-  { "10:00", "24/03/2025", "Cruise to Cyprus" },
-  { "06:00", "16/09/2024", "Cruise to Turkey!" }
+  { "00:00", "xx/xx/xxxx", "Retirement" },
+  { "17:00", "xx/xx/xxxx", "Cruise!" },
+  { "00:00", "xx/xx/xxxx", "When I'm 64!" },
+  { "10:00", "xx/xx/xxxx", "Cruise to Cyprus" },
+  { "06:00", "xx/xx/xxxx", "Cruise to Turkey!" }
 };
 
 // Global variables for tracking last update times
